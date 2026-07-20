@@ -283,7 +283,10 @@ class Patcher:
             if CJS_MARKER in source:
                 already_present = True
                 continue
-            if "function launchMPGame(gameDetails)" not in source:
+            if not re.search(
+                r"function\s+launchMPGame\s*\(\s*gameDetails\s*\)\s*\{",
+                source,
+            ):
                 continue
             replacement = (
                 "function launchMPGame(gameDetails) {\n"

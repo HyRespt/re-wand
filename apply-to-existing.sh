@@ -83,9 +83,11 @@ else
 fi
 
 mkdir -p "$root/scripts"
-for script in create_moderator.py create-moderator.sh doctor.sh; do
-  cp "$KIT_ROOT/scripts/$script" "$root/scripts/$script"
-done
+if [[ "$KIT_ROOT" != "$root" ]]; then
+  for script in create_moderator.py create-moderator.sh doctor.sh; do
+    cp "$KIT_ROOT/scripts/$script" "$root/scripts/$script"
+  done
+fi
 chmod +x "$root/scripts/create-moderator.sh" "$root/scripts/doctor.sh"
 
 python3 "$KIT_ROOT/scripts/patch_wand.py" \

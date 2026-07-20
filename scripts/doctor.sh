@@ -51,15 +51,14 @@ check "Wand Compose file" test -f docker-compose.yml
 check "Compose override" test -f docker-compose.override.yml
 check "Redis 7 Alpine image override" \
   grep -Fq "image: $REDIS_IMAGE" docker-compose.override.yml
-check "Pinned Python websockets dependency" \
-  grep -Fxq "$PYTHON_WEBSOCKETS_REQUIREMENT" houdini/requirements.txt
-check "Houdini WebSocket plugin checkout" \
-  test -f houdini/houdini/plugins/houdini-websockets/__init__.py
-check "Pinned Houdini WebSocket plugin revision" bash -c \
-  '[[ "$(git -C houdini/houdini/plugins/houdini-websockets rev-parse HEAD)" == "$1" ]]' \
-  _ "$HOUDINI_WEBSOCKETS_REF"
-
 if [[ "$ruffle_enabled" == true || -z "$ruffle_enabled" ]]; then
+  check "Pinned Python websockets dependency" \
+    grep -Fxq "$PYTHON_WEBSOCKETS_REQUIREMENT" houdini/requirements.txt
+  check "Houdini WebSocket plugin checkout" \
+    test -f houdini/houdini/plugins/houdini-websockets/__init__.py
+  check "Pinned Houdini WebSocket plugin revision" bash -c \
+    '[[ "$(git -C houdini/houdini/plugins/houdini-websockets rev-parse HEAD)" == "$1" ]]' \
+    _ "$HOUDINI_WEBSOCKETS_REF"
   check "Ruffle Vanilla marker" \
     grep -q 'WAND_RUFFLE_BEGIN' \
     templates/vanilla-media/play/index.html.template
