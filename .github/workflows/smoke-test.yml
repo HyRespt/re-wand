@@ -1,0 +1,43 @@
+name: Smoke test
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  smoke-test:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+
+      - name: Validate required files
+        run: |
+          test -f install.sh
+          test -f apply-to-existing.sh
+          test -f scripts/create-moderator.sh
+          test -f scripts/doctor.sh
+          test -f scripts/patch_wand.py
+          test -f scripts/create_moderator.py
+          test -f tests/smoke-test.sh
+
+      - name: Validate shell syntax
+        run: |
+          bash -n install.sh
+          bash -n apply-to-existing.sh
+          bash -n scripts/create-moderator.sh
+          bash -n scripts/doctor.sh
+          bash -n tests/smoke-test.sh
+
+      - name: Validate Python syntax
+        run: |
+          python3 -m py_compile \
+            scripts/patch_wand.py \
+            scripts/create_moderator.py
+
+      - name: Run patcher smoke test
+        run: bash tests/smoke-test.sh

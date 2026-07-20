@@ -1,5 +1,3 @@
-version: '3.7'
-
 services:
   db:
     image: postgres:12.2-alpine
@@ -16,7 +14,7 @@ services:
     labels:
       net.unraid.docker.icon: https://raw.githubusercontent.com/solero/wand/refs/heads/master/icons/db.png
   redis:
-    image: redis:5.0.9-alpine
+    image: redis:7-alpine
     restart: always
     networks:
       - wand
