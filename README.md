@@ -1,3 +1,10 @@
+> [!WARNING]
+> **Re-Wand is still an early release.**
+>
+> I put this project together in my free time, and it has not been fully tested yet. You may encounter bugs, incomplete features, or unexpected problems.
+>
+> Please be patient while I continue improving it. You are welcome to try it out, report issues, and contribute fixes.
+
 # Re-Wand
 
 [![Smoke test](https://github.com/HyRespt/re-wand/actions/workflows/smoke-test.yml/badge.svg)](https://github.com/HyRespt/re-wand/actions/workflows/smoke-test.yml)
