@@ -15,9 +15,6 @@ set -Eeuo pipefail
 
 RE_WAND_REPOSITORY="${WAND_REPOSITORY:-https://github.com/HyRespt/re-wand.git}"
 
-# Keep "master" until the matching release tag has actually been published.
-# After publishing v0.2.1, change this default to:
-#   RE_WAND_REF="${WAND_REF:-v0.2.1}"
 RE_WAND_REF="${WAND_REF:-master}"
 
 RUFFLE_VERSION="${RUFFLE_VERSION:-0.3.0}"
