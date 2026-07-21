@@ -126,6 +126,7 @@ if command -v nginx >/dev/null 2>&1; then
     printf 'error_log stderr notice;\n'
     mkdir -p "$TMP/nginx-body" "$TMP/nginx-proxy" "$TMP/nginx-fastcgi" "$TMP/nginx-uwsgi" "$TMP/nginx-scgi"
     printf 'events {}\nhttp {\n'
+    printf 'access_log off;\n'
     printf 'client_body_temp_path %s;\n' "$TMP/nginx-body"
     printf 'proxy_temp_path %s;\n' "$TMP/nginx-proxy"
     printf 'fastcgi_temp_path %s;\n' "$TMP/nginx-fastcgi"
