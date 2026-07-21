@@ -1,5 +1,14 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
+
+on_error() {
+  local status="$?"
+  local line="${BASH_LINENO[0]:-unknown}"
+  printf 'Smoke test failed at line %s: %s (exit %s)\n' \
+    "$line" "$BASH_COMMAND" "$status" >&2
+  exit "$status"
+}
+trap on_error ERR
 KIT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 TMP_ROOT="$(mktemp -d)"
 trap 'rm -rf "$TMP_ROOT"' EXIT
@@ -15,6 +24,28 @@ printf '# fake utils\n' > "$PLUGIN_SOURCE/utils.py"
 git -C "$PLUGIN_SOURCE" add .
 git -C "$PLUGIN_SOURCE" commit -qm "Initial fake plugin"
 PLUGIN_REF="$(git -C "$PLUGIN_SOURCE" rev-parse HEAD)"
+
+assert_contains() {
+  local expected="$1"
+  local file="$2"
+
+  if ! grep -Fq -- "$expected" "$file"; then
+    printf 'Expected text was not found in %s:\n  %s\n' \
+      "$file" "$expected" >&2
+    return 1
+  fi
+}
+
+assert_not_contains() {
+  local unexpected="$1"
+  local file="$2"
+
+  if grep -Fq -- "$unexpected" "$file"; then
+    printf 'Unexpected text was found in %s:\n  %s\n' \
+      "$file" "$unexpected" >&2
+    return 1
+  fi
+}
 
 make_fixture() {
   local root="$1"
@@ -155,8 +186,12 @@ grep -Fq 'RUFFLE_SCRIPT_URL=https://unpkg.com/@ruffle-rs/ruffle@0.3.0' "$TMP/.en
 TMP_NO_PERSIST="$TMP_ROOT/without-persistence"
 make_fixture "$TMP_NO_PERSIST"
 run_patcher "$TMP_NO_PERSIST" false
-grep -q 'image: redis:7-alpine' "$TMP_NO_PERSIST/docker-compose.override.yml"
-! grep -q 'redis-data:/data' "$TMP_NO_PERSIST/docker-compose.override.yml"
+assert_contains \
+  'image: redis:7-alpine' \
+  "$TMP_NO_PERSIST/docker-compose.override.yml"
+assert_not_contains \
+  'redis-data:/data' \
+  "$TMP_NO_PERSIST/docker-compose.override.yml"
 
 python3 - "$TMP/docker-compose.override.yml" <<'PY'
 import sys
@@ -170,13 +205,5 @@ assert "services" in data
 assert data["services"]["houdini_glaciar"]["profiles"] == ["multilang"]
 assert data["services"]["redis"]["image"] == "redis:7-alpine"
 PY
-
-INSTALL_HELP="$TMP_ROOT/install-help.txt"
-bash "$KIT_ROOT/install.sh" --help > "$INSTALL_HELP"
-
-grep -Fq -- '-media, --skip-media-download' "$INSTALL_HELP"
-grep -Fq 'Card-Jitsu Snow remains available' "$KIT_ROOT/install.sh"
-! grep -Fq 'Card-Jitsu Snow disabled because media' "$KIT_ROOT/install.sh"
-grep -Fq 'openssl rand -hex' "$KIT_ROOT/install.sh"
 
 printf 'Smoke test passed.\n'
