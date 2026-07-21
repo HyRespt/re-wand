@@ -18,7 +18,7 @@ PLUGIN_REF="$(git -C "$PLUGIN_SOURCE" rev-parse HEAD)"
 
 make_fixture() {
   local root="$1"
-  mkdir -p "$root"/{houdini/houdini/plugins,templates/sites,templates/vanilla-media/play,templates/legacy-media/play,vanilla-media/play/sites/default/files/js}
+  mkdir -p "$root"/{houdini/houdini/plugins,templates/sites,templates/dash,templates/vanilla-media/play,templates/legacy-media/play,vanilla-media/play/sites/default/files/js}
   cat > "$root/.env" <<'ENV'
 POSTGRES_USER=postgres
 POSTGRES_PASSWORD=test
@@ -29,6 +29,7 @@ WEB_VANILLA_MEDIA=http://media.localhost
 WEB_LEGACY_PLAY=http://old.localhost
 SNOWFLAKE_HOST=127.0.0.1
 SNOWFLAKE_PORT=7002
+EMAIL_SMTP_PORT=
 ENV
   cat > "$root/docker-compose.yml" <<'YAML'
 version: '3.7'
@@ -47,9 +48,14 @@ networks:
 YAML
   printf 'asyncpg\nwebsockets\n' > "$root/houdini/requirements.txt"
   cat > "$root/templates/sites/vanilla.conf.template" <<'NGINX'
-server { server_name example; location / { root /x; } }
+server { server_name play.example; # WAND_RUFFLE_CORS add_header Access-Control-Allow-Origin "*" always; location / { root /usr/share/nginx/vanilla/play; } } server { server_name media.example; location / { root /usr/share/nginx/vanilla/media; } }
 NGINX
-  cp "$root/templates/sites/vanilla.conf.template" "$root/templates/sites/legacy.conf.template"
+  cat > "$root/templates/sites/legacy.conf.template" <<'NGINX'
+server { server_name old.example; location / { root /usr/share/nginx/legacy/play; } } server { server_name legacy.example; location / { root /usr/share/nginx/legacy/media; } }
+NGINX
+  cat > "$root/templates/dash/config.py.template" <<'PY'
+SMTP_PORT = int('{{ .Env.EMAIL_SMTP_PORT }}')
+PY
   cat > "$root/templates/vanilla-media/play/index.html.template" <<'HTML'
 <!doctype html><html><head><script>var x={"wns":"old.example"};</script></head><body></body></html>
 HTML
@@ -80,6 +86,7 @@ run_patcher "$TMP" true
 
 files=(
   .env docker-compose.yml docker-compose.override.yml servers.xml
+  templates/dash/config.py.template
   houdini/requirements.txt templates/sites/vanilla.conf.template
   templates/sites/legacy.conf.template
   templates/vanilla-media/play/index.html.template
@@ -90,6 +97,48 @@ for file in "${files[@]}"; do sha256sum "$TMP/$file"; done > "$TMP/before.sha"
 run_patcher "$TMP" true
 for file in "${files[@]}"; do sha256sum "$TMP/$file"; done > "$TMP/after.sha"
 diff -u "$TMP/before.sha" "$TMP/after.sha"
+
+python3 - "$TMP/.env" "$TMP/templates/dash/config.py.template" <<'PY'
+from pathlib import Path
+import sys
+
+env = Path(sys.argv[1]).read_text(encoding="utf-8").splitlines()
+template = Path(sys.argv[2]).read_text(encoding="utf-8")
+
+assert env.count("EMAIL_SMTP_PORT=587") == 1
+assert "SMTP_PORT = int('{{ .Env.EMAIL_SMTP_PORT }}' or '587')" in template
+PY
+test "$(grep -o 'Access-Control-Allow-Origin' "$TMP/templates/sites/vanilla.conf.template" | wc -l)" -eq 2
+test "$(grep -o 'Access-Control-Allow-Origin' "$TMP/templates/sites/legacy.conf.template" | wc -l)" -eq 2
+test "$(grep -o 'if ($request_method = OPTIONS) { return 204; }' "$TMP/templates/sites/vanilla.conf.template" | wc -l)" -eq 2
+test "$(grep -o 'if ($request_method = OPTIONS) { return 204; }' "$TMP/templates/sites/legacy.conf.template" | wc -l)" -eq 2
+! grep -q 'WAND_RUFFLE_CORS' "$TMP/templates/sites/vanilla.conf.template"
+grep -Fq 'server_name media.example; add_header Access-Control-Allow-Origin "*" always;' \
+  "$TMP/templates/sites/vanilla.conf.template"
+grep -Fq 'Access-Control-Allow-Headers "$http_access_control_request_headers" always;' \
+  "$TMP/templates/sites/vanilla.conf.template"
+grep -Fq 'Access-Control-Expose-Headers "Content-Length, Content-Range, Accept-Ranges" always;' \
+  "$TMP/templates/sites/vanilla.conf.template"
+
+if command -v nginx >/dev/null 2>&1; then
+  {
+    printf 'pid %s;\n' "$TMP/nginx.pid"
+    printf 'error_log stderr notice;\n'
+    mkdir -p "$TMP/nginx-body" "$TMP/nginx-proxy" "$TMP/nginx-fastcgi" "$TMP/nginx-uwsgi" "$TMP/nginx-scgi"
+    printf 'events {}\nhttp {\n'
+    printf 'client_body_temp_path %s;\n' "$TMP/nginx-body"
+    printf 'proxy_temp_path %s;\n' "$TMP/nginx-proxy"
+    printf 'fastcgi_temp_path %s;\n' "$TMP/nginx-fastcgi"
+    printf 'uwsgi_temp_path %s;\n' "$TMP/nginx-uwsgi"
+    printf 'scgi_temp_path %s;\n' "$TMP/nginx-scgi"
+    cat "$TMP/templates/sites/vanilla.conf.template"
+    printf '\n'
+    cat "$TMP/templates/sites/legacy.conf.template"
+    printf '\n}\n'
+  } > "$TMP/nginx-test.conf"
+
+  nginx -t -q -c "$TMP/nginx-test.conf"
+fi
 
 grep -Fxq 'websockets==15.0.1' "$TMP/houdini/requirements.txt"
 grep -q 'WAND_RUFFLE_BEGIN' "$TMP/templates/vanilla-media/play/index.html.template"
@@ -122,3 +171,9 @@ assert data["services"]["redis"]["image"] == "redis:7-alpine"
 PY
 
 printf 'Smoke test passed.\n'
+
+
+bash "$KIT_ROOT/install.sh" --help | grep -q -- '--skip-media-download'
+grep -q 'Card-Jitsu Snow remains available' "$KIT_ROOT/install.sh"
+! grep -q 'Card-Jitsu Snow disabled because media' "$KIT_ROOT/install.sh"
+grep -q 'openssl rand -hex' "$KIT_ROOT/install.sh"

@@ -25,7 +25,73 @@ HOUDINI_WEBSOCKETS_REF="${HOUDINI_WEBSOCKETS_REF:-8721758d4fa593ff3a19138e0cc3f8
 PYTHON_WEBSOCKETS_REQUIREMENT="${PYTHON_WEBSOCKETS_REQUIREMENT:-websockets==15.0.1}"
 REDIS_IMAGE="${REDIS_IMAGE:-redis:7-alpine}"
 
-INSTALLER_VERSION="0.2.1"
+INSTALLER_VERSION="0.2.6"
+SKIP_MEDIA_DOWNLOAD=false
+
+usage() {
+  cat <<'EOF'
+Usage:
+  install.sh [options]
+
+Options:
+  -media, --skip-media-download
+      Avoid downloading the large Vanilla and Legacy media Git objects again.
+      An initialized local Re-Wand checkout is used as a Git reference when
+      available. Set RE_WAND_MEDIA_SOURCE=/path/to/re-wand to select it.
+
+  -h, --help
+      Show this message.
+EOF
+}
+
+parse_arguments() {
+  while (($#)); do
+    case "$1" in
+      -media|--skip-media-download)
+        SKIP_MEDIA_DOWNLOAD=true
+        ;;
+      -h|--help)
+        usage
+        exit 0
+        ;;
+      *)
+        printf 'Unknown option: %s\n\n' "$1" >&2
+        usage >&2
+        exit 2
+        ;;
+    esac
+    shift
+  done
+}
+
+installer_source_directory() {
+  local source="${BASH_SOURCE[0]}"
+  if [[ "$source" != /dev/fd/* && "$source" != /proc/self/fd/* && -e "$source" ]]; then
+    cd "$(dirname "$source")" && pwd
+  else
+    pwd
+  fi
+}
+
+is_initialized_git_checkout() {
+  local path="$1"
+  [[ -d "$path" && -e "$path/.git" ]] \
+    && git -C "$path" rev-parse --git-dir >/dev/null 2>&1
+}
+
+find_local_media_source() {
+  local candidate script_root
+  script_root="$(installer_source_directory)"
+  for candidate in "${RE_WAND_MEDIA_SOURCE:-}" "$script_root" "$PWD"; do
+    [[ -n "$candidate" ]] || continue
+    if is_initialized_git_checkout "$candidate/vanilla-media" \
+      && is_initialized_git_checkout "$candidate/legacy-media"; then
+      cd "$candidate" && pwd
+      return 0
+    fi
+  done
+  return 1
+}
 
 on_error() {
   local exit_code=$?
@@ -204,10 +270,12 @@ read_secret_with_default_generation() {
   local value
 
   read -r -s -p "$prompt" value
-  printf '\n'
+  # Visual newline only; do not capture it in POSTGRES_PASSWORD.
+  printf '\n' >&2
 
   if [[ -z "$value" ]]; then
-    value="$(openssl rand -base64 "$generated_length" | tr -d '\n')"
+    # Safe for an unquoted Docker Compose dotenv value.
+    value="$(openssl rand -hex "$generated_length")"
   fi
 
   printf '%s' "$value"
@@ -267,7 +335,7 @@ EMAIL_METHOD=
 EMAIL_FROM_ADDRESS=no-reply@example.com
 EMAIL_SENDGRID_KEY=
 EMAIL_SMTP_HOST=
-EMAIL_SMTP_PORT=
+EMAIL_SMTP_PORT=587
 EMAIL_SMTP_USER=
 EMAIL_SMTP_PASS=
 EMAIL_SMTP_SSL=TRUE
@@ -294,6 +362,10 @@ EOF_ENV
 
 clone_or_prepare_checkout() {
   local target="$1"
+  local core_submodules=(dash houdini snowflake)
+  local media_submodules=(legacy-media vanilla-media)
+  local media_source=""
+  local submodule
 
   if [[ -e "$target" && ! -f "$target/docker-compose.yml" ]]; then
     echo "Target exists but is not a Re-Wand checkout: $target" >&2
@@ -305,16 +377,48 @@ clone_or_prepare_checkout() {
     echo "Cloning Re-Wand..."
     echo "  Repository: $RE_WAND_REPOSITORY"
     echo "  Reference:  $RE_WAND_REF"
-
-    git clone \
-      --recurse-submodules \
-      --branch "$RE_WAND_REF" \
-      --single-branch \
-      "$RE_WAND_REPOSITORY" \
-      "$target"
+    git clone --branch "$RE_WAND_REF" --single-branch \
+      "$RE_WAND_REPOSITORY" "$target"
   else
     echo "Using existing checkout: $target"
-    git -C "$target" submodule update --init --recursive
+  fi
+
+  echo "Initializing core submodules..."
+  git -C "$target" submodule update --init --recursive \
+    "${core_submodules[@]}"
+
+  if [[ "$SKIP_MEDIA_DOWNLOAD" != true ]]; then
+    echo "Initializing media submodules..."
+    git -C "$target" submodule update --init --recursive \
+      "${media_submodules[@]}"
+    return
+  fi
+
+  echo "Media network-download skipping is enabled."
+  if media_source="$(find_local_media_source)"; then
+    echo "Reusing media Git objects from: $media_source"
+    for submodule in "${media_submodules[@]}"; do
+      if is_initialized_git_checkout "$target/$submodule"; then
+        echo "  $submodule is already initialized; keeping it."
+        continue
+      fi
+      git -C "$target" submodule update --init --recursive \
+        --reference "$media_source/$submodule" "$submodule"
+    done
+  else
+    mkdir -p "$target/legacy-media" "$target/vanilla-media"
+    cat <<'EOF'
+
+No initialized local media checkout was found, so media initialization was
+skipped. The browser client cannot load without the Vanilla media files.
+
+Install media later with:
+
+  git submodule update --init --recursive legacy-media vanilla-media
+  bash apply-to-existing.sh .
+  docker compose up -d --build
+
+EOF
   fi
 }
 
@@ -391,6 +495,7 @@ HOUDINI_WEBSOCKETS_REPOSITORY=$HOUDINI_WEBSOCKETS_REPOSITORY
 HOUDINI_WEBSOCKETS_REF=$HOUDINI_WEBSOCKETS_REF
 PYTHON_WEBSOCKETS_REQUIREMENT=$PYTHON_WEBSOCKETS_REQUIREMENT
 REDIS_IMAGE=$REDIS_IMAGE
+SKIP_MEDIA_DOWNLOAD=$SKIP_MEDIA_DOWNLOAD
 EOF_OPTIONS
 }
 
@@ -435,6 +540,7 @@ create_initial_moderator() {
 }
 
 main() {
+  parse_arguments "$@"
   print_banner
   require_linux
   configure_privilege_command
@@ -442,6 +548,13 @@ main() {
   install_docker
   install_compose_plugin_if_needed
   select_docker_command
+
+  if [[ "$SKIP_MEDIA_DOWNLOAD" == true ]]; then
+    cat <<'EOF'
+Media network-download skipping is enabled.
+
+EOF
+  fi
 
   echo "Please answer the following questions."
   echo
@@ -619,4 +732,6 @@ Diagnostics:
 EOF
 }
 
-main "$@"
+if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
+  main "$@"
+fi

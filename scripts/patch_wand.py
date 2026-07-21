@@ -86,6 +86,38 @@ class Patcher:
             output.extend(f"{key}={value}" for key, value in remaining.items())
         self.write(path, "\n".join(output).rstrip() + "\n")
 
+    def repair_dash_smtp(self) -> None:
+        """Repair Dash SMTP defaults for an existing Wand installation."""
+        env_path = self.require(".env")
+        lines = env_path.read_text(encoding="utf-8").splitlines()
+        output: list[str] = []
+        found = False
+
+        for line in lines:
+            if line.startswith("EMAIL_SMTP_PORT="):
+                found = True
+                value = line.partition("=")[2].strip()
+                output.append(line if value else "EMAIL_SMTP_PORT=587")
+            else:
+                output.append(line)
+
+        if not found:
+            output.extend(["", "EMAIL_SMTP_PORT=587"])
+
+        self.write(env_path, "\n".join(output).rstrip() + "\n")
+
+        template_path = self.require("templates/dash/config.py.template")
+        template = template_path.read_text(encoding="utf-8")
+        old = "SMTP_PORT = int('{{ .Env.EMAIL_SMTP_PORT }}')"
+        new = "SMTP_PORT = int('{{ .Env.EMAIL_SMTP_PORT }}' or '587')"
+
+        if old in template:
+            self.write(template_path, template.replace(old, new, 1))
+        elif new not in template:
+            self.warnings.append(
+                "Could not install the Dash SMTP_PORT fallback."
+            )
+
     def remove_obsolete_compose_version(self) -> None:
         path = self.require("docker-compose.yml")
         content = path.read_text(encoding="utf-8")
@@ -129,20 +161,70 @@ class Patcher:
         self.write(requirements, "\n".join(output).rstrip() + "\n")
 
     def patch_cors(self, enabled: bool) -> None:
-        for relative in ("templates/sites/vanilla.conf.template", "templates/sites/legacy.conf.template"):
+        """Configure browser CORS and OPTIONS preflight handling.
+
+        Wand's Nginx templates are minified onto one line. Server-level
+        directives reliably cover static files, proxy locations, error
+        responses, and browser preflight requests.
+        """
+        server_name = re.compile(r"(server_name\s+[^;]+;)")
+
+        managed_directives = (
+            ' add_header Access-Control-Allow-Origin "*" always;'
+            ' add_header Access-Control-Allow-Methods '
+            '"GET, HEAD, POST, OPTIONS" always;'
+            ' add_header Access-Control-Allow-Headers '
+            '"$http_access_control_request_headers" always;'
+            ' add_header Access-Control-Expose-Headers '
+            '"Content-Length, Content-Range, Accept-Ranges" always;'
+            ' add_header Access-Control-Max-Age "86400" always;'
+            ' if ($request_method = OPTIONS) { return 204; }'
+        )
+
+        for relative in (
+            "templates/sites/vanilla.conf.template",
+            "templates/sites/legacy.conf.template",
+        ):
             path = self.require(relative)
             content = path.read_text(encoding="utf-8")
+
+            # Remove the old marker. On minified templates, placing a '#'
+            # marker inline commented out the generated header.
             content = re.sub(
-                rf"\s*{re.escape(CORS_MARKER)}\s*add_header\s+Access-Control-Allow-Origin\s+[^;]+;",
+                rf"\s*{re.escape(CORS_MARKER)}\s*",
+                " ",
+                content,
+            )
+
+            # Remove directives managed by prior Re-Wand versions so the
+            # migration remains idempotent and does not duplicate headers.
+            for header in (
+                "Access-Control-Allow-Origin",
+                "Access-Control-Allow-Methods",
+                "Access-Control-Allow-Headers",
+                "Access-Control-Expose-Headers",
+                "Access-Control-Max-Age",
+            ):
+                content = re.sub(
+                    rf"\s*add_header\s+{re.escape(header)}\s+"
+                    r'(?:"[^"]*"|[^;]+)\s+always\s*;',
+                    "",
+                    content,
+                )
+
+            content = re.sub(
+                r"\s*if\s*\(\s*\$request_method\s*=\s*OPTIONS\s*\)"
+                r"\s*\{\s*return\s+204\s*;\s*\}",
                 "",
                 content,
             )
+
             if enabled:
-                content = re.sub(
-                    r"(server_name\s+[^;]+;)",
-                    rf'\1 {CORS_MARKER} add_header Access-Control-Allow-Origin "*" always;',
+                content = server_name.sub(
+                    lambda match: match.group(1) + managed_directives,
                     content,
                 )
+
             self.write(path, content)
 
     @staticmethod
@@ -447,6 +529,7 @@ def main() -> int:
     patcher.require("templates/legacy-media/play/index.html.template")
 
     patcher.remove_obsolete_compose_version()
+    patcher.repair_dash_smtp()
     patcher.update_env(
         {
             "RUFFLE_SCRIPT_URL": args.ruffle_script_url,

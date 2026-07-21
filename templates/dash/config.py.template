@@ -125,7 +125,7 @@ FROM_EMAIL = '{{ .Env.EMAIL_FROM_ADDRESS }}'
 SENDGRID_API_KEY = '{{ .Env.EMAIL_SENDGRID_KEY }}'
 
 SMTP_HOST = '{{ .Env.EMAIL_SMTP_HOST }}'
-SMTP_PORT = int('{{ .Env.EMAIL_SMTP_PORT }}')
+SMTP_PORT = int('{{ .Env.EMAIL_SMTP_PORT }}' or '587')
 SMTP_USER = '{{ .Env.EMAIL_SMTP_USER }}'
 SMTP_PASS = '{{ .Env.EMAIL_SMTP_PASS }}'
 SMTP_SSL = {{ if eq .Env.EMAIL_SMTP_SSL "TRUE" }}True{{ else }}False{{ end }}
