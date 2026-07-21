@@ -171,10 +171,12 @@ assert data["services"]["houdini_glaciar"]["profiles"] == ["multilang"]
 assert data["services"]["redis"]["image"] == "redis:7-alpine"
 PY
 
+INSTALL_HELP="$TMP_ROOT/install-help.txt"
+bash "$KIT_ROOT/install.sh" --help > "$INSTALL_HELP"
+
+grep -Fq -- '-media, --skip-media-download' "$INSTALL_HELP"
+grep -Fq 'Card-Jitsu Snow remains available' "$KIT_ROOT/install.sh"
+! grep -Fq 'Card-Jitsu Snow disabled because media' "$KIT_ROOT/install.sh"
+grep -Fq 'openssl rand -hex' "$KIT_ROOT/install.sh"
+
 printf 'Smoke test passed.\n'
-
-
-bash "$KIT_ROOT/install.sh" --help | grep -q -- '--skip-media-download'
-grep -q 'Card-Jitsu Snow remains available' "$KIT_ROOT/install.sh"
-! grep -q 'Card-Jitsu Snow disabled because media' "$KIT_ROOT/install.sh"
-grep -q 'openssl rand -hex' "$KIT_ROOT/install.sh"
